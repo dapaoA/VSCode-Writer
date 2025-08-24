@@ -51,6 +51,13 @@ const STORAGE_PREV_SETTINGS = 'aiComplete.prevEditorSettings';
 let quickMode = undefined;
 let quickCandidates = [];
 let quickRequirement = undefined;
+let quickSuspendTimer = undefined; // 用于临时暂停内联续写
+function scheduleQuickResume(ms = 5000) {
+    if (quickSuspendTimer) {
+        clearTimeout(quickSuspendTimer);
+    }
+    quickSuspendTimer = setTimeout(() => { quickMode = undefined; quickSuspendTimer = undefined; }, ms);
+}
 function activate(ctx) {
     // 设置 OpenAI API Key（存 SecretStorage）
     ctx.subscriptions.push(vscode.commands.registerCommand('aiComplete.setOpenAIApiKey', async () => {
@@ -148,6 +155,7 @@ function activate(ctx) {
     // 快速写作选单（内联类别选择）：Ctrl+Shift+K 直接在光标处用 Suggest Widget 展示类别
     ctx.subscriptions.push(vscode.commands.registerCommand('aiComplete.quickSuggest', async () => {
         quickMode = 'category';
+        scheduleQuickResume();
         await vscode.commands.executeCommand('editor.action.triggerSuggest');
     }));
     // 注册 Inline Completion（Markdown & Plaintext）
@@ -190,6 +198,10 @@ class WritingInlineProvider {
         this.ctx = ctx;
     }
     async provideInlineCompletionItems(document, position, context, token) {
+        // 若正处于 QuickSuggest 交互（类别/候选选择期间），暂停自动续写，避免干扰
+        if (quickMode === 'category' || quickMode === 'menu') {
+            return;
+        }
         const enabled = vscode.workspace.getConfiguration().get(`${CFG}.enabled`, true);
         if (!enabled)
             return;
@@ -251,32 +263,8 @@ function getContextAfterPosition(document, position, charCount) {
 function buildPrompt(document, position, maxCtx, maxOut) {
     const before = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
     const ctxText = before.slice(Math.max(0, before.length - maxCtx));
-    return [
-        'Role:',
-        'You are a professional, highly skilled writer who helps authors continue their stories when they are stuck.',
-        '',
-        'When you are called, you must judge which of the following applies:',
-        '',
-        'Story-level problem: The author does not know how the story should progress.',
-        'Illustration-level problem: The author does not know how to describe a person, object, or event—what kind of sentence to use, or which part of the item to illustrate.',
-        'Word-level problem: The author does not know which word, adjective, or expression best conveys a feeling, color, shape, or detail.',
-        '',
-        'Expectations:',
-        '',
-        'Consistency: Match the author\'s style, rhythm, tone, and vocabulary.',
-        'Potential Direction: Based on the preceding text, provide a continuation that fits the story\'s tone, intent, atmosphere, and emotion. Do not deviate from the established development.',
-        `Quality: The continuation should be accurate, concise, yet imaginative. Do not repeat the previous content, and do not explain your reasoning. Just provide the continuation of the story. Maximum ${maxOut} characters.`,
-        '',
-        'Output Format:',
-        '',
-        'Only output the continuation text.',
-        '',
-        'Ensure coherence with the immediately preceding passage.',
-        '',
-        '---',
-        'Context:',
-        ctxText
-    ].join('\n');
+    const tmpl = getPromptTemplate('continuation').replace('{{maxOut}}', String(maxOut));
+    return tmpl + ctxText;
 }
 // 构建“填补”提示词：使用光标前后文，要求补齐中间缺失的词语/短语/语句
 function buildInfillingPrompt(document, position, maxCtx, maxOut) {
@@ -285,34 +273,10 @@ function buildInfillingPrompt(document, position, maxCtx, maxOut) {
     const end = new vscode.Position(document.lineCount - 1, document.lineAt(document.lineCount - 1).text.length);
     const afterAll = document.getText(new vscode.Range(position, end));
     const afterCtx = afterAll.slice(0, Math.floor(maxCtx / 2));
-    return [
-        'Role:',
-        'You are a professional, highly skilled writer who helps authors complete missing pieces inside a passage.',
-        '',
-        'Mode: INFILL (the cursor is in the middle of a passage).',
-        '',
-        'When you are called, first judge which gap type applies:',
-        ' - Word-level gap: a single word or short collocation is missing (e.g., an adjective, precise verb, color/shape term).',
-        ' - Illustration-level gap: a brief metaphor/sensory phrase or one compact descriptive sentence is needed to enrich imagery.',
-        ' - Micro-continuation sentence: one short linking sentence is needed to smoothly connect before and after without changing plot direction.',
-        '',
-        'Expectations:',
-        ' - Consistency: Match the author\'s style, rhythm, tone, vocabulary, tense, and point of view.',
-        ' - Minimality: Insert the smallest necessary text that makes the passage flow naturally.',
-        ' - Local coherence: Your insertion must bridge BEFORE and AFTER seamlessly. Do not repeat adjacent tokens.',
-        ' - No plot leaps: Do not introduce new developments beyond what the context implies.',
-        ` - Limit: at most ${maxOut} characters. No explanations. Output only the insertion text.`,
-        '',
-        '---',
-        'Before:',
-        beforeCtx,
-        '',
-        'After:',
-        afterCtx,
-        '',
-        '---',
-        'Insert here:'
-    ].join('\n');
+    const h = getPromptTemplate('infilling').replace('{{maxOut}}', String(maxOut));
+    const mid = getPromptTemplate('infillingAfterHeader');
+    const f = getPromptTemplate('infillingFooter');
+    return h + beforeCtx + mid + afterCtx + f;
 }
 // 自定义 INFILL：用户额外说明需求（如"补一个隐喻"）
 function buildCustomInfillingPrompt(document, position, maxCtx, requirement) {
@@ -321,23 +285,8 @@ function buildCustomInfillingPrompt(document, position, maxCtx, requirement) {
     const end = new vscode.Position(document.lineCount - 1, document.lineAt(document.lineCount - 1).text.length);
     const afterAll = document.getText(new vscode.Range(position, end));
     const afterCtx = afterAll.slice(0, Math.floor(maxCtx / 2));
-    return [
-        'Mode: INFILL with user requirement.',
-        `Requirement: ${requirement}`,
-        '',
-        'Expectations:',
-        ' - Minimal insertion that satisfies the requirement and matches style/tone.',
-        ' - Bridge BEFORE and AFTER seamlessly. No explanations. Output only the insertion.',
-        '',
-        '---',
-        'Before:',
-        beforeCtx,
-        '',
-        'After:',
-        afterCtx,
-        '',
-        'Insert here:'
-    ].join('\n');
+    const tmpl = getPromptTemplate('customInfilling').replace('{{requirement}}', requirement);
+    return tmpl + beforeCtx + '\n\nAfter:\n' + afterCtx + '\n\nInsert here:';
 }
 // 根据类别生成候选列表（形容词/名词/动词/修辞）
 function buildCategoryPrompt(document, position, maxCtx, categoryDigit) {
@@ -350,15 +299,19 @@ function buildCategoryPrompt(document, position, maxCtx, categoryDigit) {
         '4': 'rhetoric (修辞/隐喻/意象/感官描写短语或一句话)'
     };
     const type = categoryMap[categoryDigit] || 'expressions';
-    return [
-        'You are assisting a writer. Based on the following context, list concise candidates that fit naturally right after the cursor.',
-        `Category: ${type}`,
-        'Output as a simple numbered list, one candidate per line, no extra explanations.',
-        '',
-        '---',
-        'Context:',
-        beforeCtx
-    ].join('\n');
+    const tmpl = getPromptTemplate('category').replace('{{type}}', type);
+    return tmpl + beforeCtx;
+}
+function getPromptTemplate(key) {
+    try {
+        const uri = vscode.Uri.joinPath(vscode.workspace.workspaceFolders?.[0].uri || vscode.Uri.file(''), 'ai-complete', 'resources', 'prompt', 'prompts.json');
+        const buf = require('fs').readFileSync(uri.fsPath, 'utf8');
+        const json = JSON.parse(buf);
+        return String(json[key] || '');
+    }
+    catch {
+        return '';
+    }
 }
 // 请求统一入口：按 provider 链路回退
 async function requestFromModels(ctx, providerPref, prompt, maxOut, temperature) {
