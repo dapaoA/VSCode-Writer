@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Panel</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            margin: 0;
+            padding: 16px;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .chat-header {
+            text-align: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .chat-header h2 {
+            margin: 0;
+            color: var(--vscode-editor-foreground);
+            font-size: 16px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            padding: 8px;
+            background-color: var(--vscode-input-background);
+            border-radius: 6px;
+            border: 1px solid var(--vscode-input-border);
+        }
+
+        .message {
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+
+        .message.user {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .message.ai {
+            background-color: var(--vscode-editor-inactiveSelectionBackground);
+            color: var(--vscode-editor-foreground);
+            margin-right: auto;
+        }
+
+        .message-input-container {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 6px;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            font-family: inherit;
+            font-size: inherit;
+            resize: none;
+            min-height: 36px;
+            max-height: 120px;
+        }
+
+        .message-input:focus {
+            outline: none;
+            border-color: var(--vscode-focusBorder);
+        }
+
+        .send-button {
+            padding: 8px 16px;
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: inherit;
+            white-space: nowrap;
+        }
+
+        .send-button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .send-button:disabled {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            cursor: not-allowed;
+        }
+
+        .copy-button {
+            background: none;
+            border: none;
+            color: var(--vscode-textLink-foreground);
+            cursor: pointer;
+            font-size: 12px;
+            padding: 2px 6px;
+            margin-top: 4px;
+            border-radius: 3px;
+        }
+
+        .copy-button:hover {
+            background-color: var(--vscode-toolbar-hoverBackground);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--vscode-progressBar-background);
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .clear-button {
+            background: none;
+            border: none;
+            color: var(--vscode-textLink-foreground);
+            cursor: pointer;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 3px;
+        }
+
+        .clear-button:hover {
+            background-color: var(--vscode-toolbar-hoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2>🤖 AI 对话助手</h2>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div class="message ai">
+                <div>你好！我是AI写作助手，有什么可以帮助你的吗？</div>
+                <button class="copy-button" onclick="copyMessage(this)">复制</button>
+            </div>
+        </div>
+        
+        <div class="message-input-container">
+            <textarea 
+                class="message-input" 
+                id="messageInput" 
+                placeholder="输入你的问题..."
+                rows="1"
+                onkeydown="handleKeyDown(event)"
+            ></textarea>
+            <button class="send-button" id="sendButton" onclick="sendMessage()">发送</button>
+        </div>
+        
+        <div class="status-bar">
+            <span id="statusText">就绪</span>
+            <button class="clear-button" onclick="clearChat()">清空对话</button>
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let isWaitingForResponse = false;
+
+        // 自动调整输入框高度
+        document.getElementById('messageInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+
+        // 处理回车键发送
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        // 发送消息
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            
+            if (!message || isWaitingForResponse) return;
+            
+            // 添加用户消息
+            addMessage(message, 'user');
+            input.value = '';
+            input.style.height = 'auto';
+            
+            // 显示AI正在输入状态
+            showTypingIndicator();
+            
+            // 发送到扩展
+            vscode.postMessage({
+                command: 'sendMessage',
+                message: message
+            });
+        }
+
+        // 添加消息到聊天界面
+        function addMessage(content, sender) {
+            const messagesContainer = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.textContent = content;
+            
+            const copyButton = document.createElement('button');
+            copyButton.className = 'copy-button';
+            copyButton.textContent = '复制';
+            copyButton.onclick = function() { copyMessage(this); };
+            
+            messageDiv.appendChild(contentDiv);
+            messageDiv.appendChild(copyButton);
+            messagesContainer.appendChild(messageDiv);
+            
+            // 滚动到底部
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // 显示AI正在输入状态
+        function showTypingIndicator() {
+            const messagesContainer = document.getElementById('chatMessages');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message ai';
+            typingDiv.id = 'typingIndicator';
+            
+            const loadingSpan = document.createElement('span');
+            loadingSpan.className = 'loading';
+            
+            const textSpan = document.createElement('span');
+            textSpan.textContent = ' AI正在思考中...';
+            
+            typingDiv.appendChild(loadingSpan);
+            typingDiv.appendChild(textSpan);
+            messagesContainer.appendChild(typingDiv);
+            
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            isWaitingForResponse = true;
+            updateStatus('AI正在思考中...');
+        }
+
+        // 隐藏AI正在输入状态
+        function hideTypingIndicator() {
+            const typingIndicator = document.getElementById('typingIndicator');
+            if (typingIndicator) {
+                typingIndicator.remove();
+            }
+            isWaitingForResponse = false;
+            updateStatus('就绪');
+        }
+
+        // 复制消息内容
+        function copyMessage(button) {
+            const messageContent = button.previousElementSibling.textContent;
+            navigator.clipboard.writeText(messageContent).then(() => {
+                const originalText = button.textContent;
+                button.textContent = '已复制';
+                button.style.color = 'var(--vscode-notificationsSuccessIcon-foreground)';
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.style.color = 'var(--vscode-textLink-foreground)';
+                }, 1000);
+            });
+        }
+
+        // 清空对话
+        function clearChat() {
+            const messagesContainer = document.getElementById('chatMessages');
+            messagesContainer.innerHTML = `
+                <div class="message ai">
+                    <div>对话已清空，有什么可以帮助你的吗？</div>
+                    <button class="copy-button" onclick="copyMessage(this)">复制</button>
+                </div>
+            `;
+            updateStatus('对话已清空');
+        }
+
+        // 更新状态栏
+        function updateStatus(text) {
+            document.getElementById('statusText').textContent = text;
+        }
+
+        // 处理来自扩展的消息
+        window.addEventListener('message', event => {
+            const message = event.data;
+            
+            switch (message.command) {
+                case 'aiResponse':
+                    hideTypingIndicator();
+                    addMessage(message.content, 'ai');
+                    break;
+                    
+                case 'error':
+                    hideTypingIndicator();
+                    addMessage(`错误: ${message.message}`, 'ai');
+                    break;
+            }
+        });
+
+        // 初始化时聚焦到输入框
+        document.getElementById('messageInput').focus();
+    </script>
+</body>
+</html>
+

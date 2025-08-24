@@ -1,0 +1,122 @@
+{
+  "name": "ai-complete",
+  "displayName": "AI Complete (Writing Inline)",
+  "version": "0.0.1",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "*",
+    "onCommand:aiComplete.quickSuggest",
+    "onCommand:aiComplete.quickAdj",
+    "onCommand:aiComplete.quickNoun",
+    "onCommand:aiComplete.quickVerb",
+    "onCommand:aiComplete.quickRhetoric",
+    "onCommand:aiComplete.quickCustom",
+    "onCommand:aiComplete.showChatPanel"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "aiComplete.setOpenAIApiKey", "title": "AI Complete: Set OpenAI API Key" },
+      { "command": "aiComplete.setDeepSeekApiKey", "title": "AI Complete: Set DeepSeek API Key" },
+      { "command": "aiComplete.toggle", "title": "AI Complete: Enable/Disable" },
+      { "command": "aiComplete.regenerate", "title": "AI Complete: Regenerate Suggestion" },
+      { "command": "aiComplete.quickSuggest", "title": "AI Complete: Quick Suggest (Adjective/Noun/Verb/Rhetoric/Custom)" },
+      { "command": "aiComplete.quickAdj", "title": "AI Complete: Quick Adjective" },
+      { "command": "aiComplete.quickNoun", "title": "AI Complete: Quick Noun" },
+      { "command": "aiComplete.quickVerb", "title": "AI Complete: Quick Verb" },
+      { "command": "aiComplete.quickRhetoric", "title": "AI Complete: Quick Rhetoric" },
+      { "command": "aiComplete.quickCustom", "title": "AI Complete: Quick Custom" },
+      { "command": "aiComplete.showChatPanel", "title": "AI Complete: Show Chat Panel" }
+    ],
+    "keybindings": [
+      {
+        "command": "aiComplete.regenerate",
+        "key": "ctrl+alt+g",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "aiComplete.quickSuggest",
+        "key": "ctrl+shift+k",
+        "when": "editorTextFocus"
+      },
+      { "command": "aiComplete.quickAdj", "key": "ctrl+alt+1", "when": "editorTextFocus" },
+      { "command": "aiComplete.quickNoun", "key": "ctrl+alt+2", "when": "editorTextFocus" },
+      { "command": "aiComplete.quickVerb", "key": "ctrl+alt+3", "when": "editorTextFocus" },
+      { "command": "aiComplete.quickRhetoric", "key": "ctrl+alt+4", "when": "editorTextFocus" },
+      { "command": "aiComplete.quickCustom", "key": "ctrl+alt+5", "when": "editorTextFocus" },
+      { "command": "aiComplete.showChatPanel", "key": "ctrl+shift+l", "when": "editorTextFocus" },
+      {
+        "command": "editor.action.inlineSuggest.showPrevious",
+        "key": "up",
+        "when": "editorTextFocus && inlineSuggestionVisible"
+      },
+      {
+        "command": "editor.action.inlineSuggest.showNext",
+        "key": "down",
+        "when": "editorTextFocus && inlineSuggestionVisible"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "AI Complete",
+      "properties": {
+        "aiComplete.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "开启/关闭写作补全"
+        },
+        "aiComplete.provider": {
+          "type": "string",
+          "enum": ["lm", "openai", "deepseek", "ollama", "auto"],
+          "default": "auto",
+          "description": "选择模型来源：VS Code Language Model API、OpenAI、DeepSeek、Ollama，或自动"
+        },
+        "aiComplete.openai.model": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "OpenAI 模型（回退时使用）"
+        },
+        "aiComplete.deepseek.model": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "DeepSeek 模型名称"
+        },
+        "aiComplete.ollama.model": {
+          "type": "string",
+          "default": "qwen2.5:7b",
+          "description": "Ollama 本地模型名"
+        },
+        "aiComplete.maxCharsContext": {
+          "type": "number",
+          "default": 2000,
+          "description": "从光标附近截取的上下文最大字符数"
+        },
+        "aiComplete.maxSuggestionChars": {
+          "type": "number",
+          "default": 140,
+          "description": "单次补全的最大字符数（控制短句续写）"
+        }
+      }
+    },
+    "viewsContainers": {},
+    "views": {}
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p .",
+    "compile": "tsc -w",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "openai": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.93.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.4",
+    "@vscode/vsce": "^3.0.0"
+  }
+}
